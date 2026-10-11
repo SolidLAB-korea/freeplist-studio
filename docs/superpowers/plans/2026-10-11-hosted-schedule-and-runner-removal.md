@@ -103,6 +103,7 @@
 
 **Interfaces:**
 - `due_request_ids(store, now_utc: datetime) -> list[str]` returns unique request IDs for releases with `production_approved=true`, an elapsed UTC `execution_start_at`, `production_status=planned`, no `cancelled_at`, and a linked request that can be safely advanced.
+- `scheduled_request_ids(store) -> set[str]` returns every request linked to any active schedule, including future schedules. In `cloud.cli advance`, schedule-linked requests are advanced only when in `due_request_ids`; future, unapproved, cancelled, or attention-needed schedule links are skipped. Existing confirmed requests with no schedule link retain their current direct-run behavior.
 - `RELEASE_FIELDS` gains only `request_id`, `production_approved`, `execution_start_at`, and `cancelled_at`; validation requires request IDs to match the existing safe-ID pattern, `production_approved` to be a boolean, and start/cancel timestamps to be UTC ISO-8601. Existing records without these fields validate as unapproved.
 - `FileStore.list_schedules() -> list[dict]` and `GitHubStore.list_schedules() -> list[dict]` read only validated schedule records under the existing status branch `cloud/schedules/`.
 - Due releases with missing request payload, conflicting status, or uncertain external submission are excluded and recorded/reported as `needs_attention`; they are never rebuilt from title-only schedule metadata.
@@ -134,11 +135,12 @@
 
 **Interfaces:**
 - Cancel action dispatches the existing record-status workflow with `schedule_cancel`, expected revision, and exact release ID.
+- Schedule editor stores a production start time separately from short/long publish times. New or edited schedules remain unapproved until the user explicitly approves production; approval persists `production_approved=true` and `execution_start_at` under the current record revision.
 - Status display reads the current GitHub schedule + request/delivery state and the latest Actions run summary; PC runner availability does not gate schedule save, display, or execution.
 - The screen hides only a confirmed cancelled release; unknown/in-flight releases remain visible with a reason.
 
-- [ ] **Step 1: UI 실패 상태 테스트 작성**
-  미실행 취소 성공 시 목록에서 사라지고, 진행 중·외부 ID 존재·unknown·409/422 시 일정은 남고 안전한 이유를 표시하는 테스트를 추가한다.
+- [ ] **Step 1: 일정 승인/취소 UI 테스트 작성**
+  저장 직후에는 제작이 시작되지 않고, 명시 승인 후 시작 시각 전에는 대기하며, 시작 시각에 도달하면 due 처리 대상으로 표시되는 테스트를 추가한다. 미실행 취소 성공 시 목록에서 사라지고, 진행 중·외부 ID 존재·unknown·409/422 시 일정은 남고 안전한 이유를 표시하는 테스트도 추가한다.
 - [ ] **Step 2: 테스트 실패 확인**
   원본 저장소의 공식 UI test command로 새 테스트만 실행해 실패를 확인한다.
 - [ ] **Step 3: UI와 client 변경**
@@ -199,7 +201,7 @@
 
 ## Completion Verification
 
-- `python -m pytest tests/test_record_status.py tests/cloud/test_schedules.py tests/cloud/test_cli.py tests/cloud/test_engine.py tests/cloud/test_dispatcher.py tests/test_actions_only.py -q` passes on the runner repository.
+- `python -m unittest discover -s tests` and `python -m unittest discover -s tests/cloud` passes on the runner repository.
 - GitHub Actions full test suite passes on `ubuntu-latest`.
 - UI test/build passes in the confirmed Studio source repository.
 - Read-only schedule inventory has zero unexplained releases; unresolved releases remain visible and unmodified.
