@@ -75,18 +75,19 @@
 
 **Interfaces:**
 - Record writer accepts `record_type=schedule_cancel` with `record_id`, `release_id`, `expected_updated_at`, and UTC `cancelled_at`.
+- Release schema explicitly allows `request_id`, `production_approved`, `execution_start_at`, and `cancelled_at`; `request_id` is the stable `gh-...` production request key. Legacy releases missing the approval/start fields remain unapproved and are never auto-started.
 - Writer returns success only after it verifies the latest schedule revision and confirms the linked request has no Kaggle submission/external job, Drive artifact, or platform delivery ID.
 - Cancellation sets the release's `production_status=cancelled` and `cancelled_at`; it keeps the release and schedule record for audit. Existing non-cancelled schedule writes keep their current contract.
 
 - [ ] **Step 1: 취소 실패 사례 테스트 작성**
   `tests/test_record_status.py`에 stale `expected_updated_at`, 연결 요청의 Kaggle/external job, Drive artifact, delivery ID, 식별 불가 상태에서는 취소가 거부되고 원본 schedule이 유지되는 테스트를 추가한다.
 - [ ] **Step 2: 테스트가 실패함을 확인**
-  Run: `python -m pytest tests/test_record_status.py -q`
+  Run: `python -m unittest discover -s tests -p 'test_record_status.py'`
   Expected: 새 cancel type/guard 테스트만 실패한다.
 - [ ] **Step 3: 취소 스키마 및 기록 검사 구현**
   `record_status.py`에서 release tombstone 필드를 엄격 검증하고, 요청/외부작업/전달 기록을 검사한다. `.github/workflows/record-status.yml`은 선택지에 `schedule_cancel`을 추가한다. 경로는 기존 상태 브랜치의 `schedules/`, `requests/`, `external/`, `deliveries/` 아래로 제한한다.
 - [ ] **Step 4: 기존 schedule/timing 테스트 회귀 확인**
-  Run: `python -m pytest tests/test_record_status.py -q`
+  Run: `python -m unittest discover -s tests -p 'test_record_status.py'`
   Expected: 취소 보호 테스트와 기존 schema/CAS/idempotency 테스트 모두 PASS.
 - [ ] **Step 5: 변경을 작은 커밋으로 저장**
   `feat: add guarded schedule cancellation tombstones`.
@@ -101,7 +102,8 @@
 - Modify: `freeplist-mobile-runner/tests/cloud/test_cli.py`
 
 **Interfaces:**
-- `due_request_ids(store, now_utc: datetime) -> list[str]` returns unique request IDs for releases with explicit approval, an elapsed UTC execution start, `production_status=planned`, no cancellation tombstone, and a linked request that can be safely advanced.
+- `due_request_ids(store, now_utc: datetime) -> list[str]` returns unique request IDs for releases with `production_approved=true`, an elapsed UTC `execution_start_at`, `production_status=planned`, no `cancelled_at`, and a linked request that can be safely advanced.
+- `RELEASE_FIELDS` gains only `request_id`, `production_approved`, `execution_start_at`, and `cancelled_at`; validation requires request IDs to match the existing safe-ID pattern, `production_approved` to be a boolean, and start/cancel timestamps to be UTC ISO-8601. Existing records without these fields validate as unapproved.
 - `FileStore.list_schedules() -> list[dict]` and `GitHubStore.list_schedules() -> list[dict]` read only validated schedule records under the existing status branch `cloud/schedules/`.
 - Due releases with missing request payload, conflicting status, or uncertain external submission are excluded and recorded/reported as `needs_attention`; they are never rebuilt from title-only schedule metadata.
 - `cloud.cli advance` invokes the existing `advance(request_id, engine, store)` for eligible IDs; it does not add another generation/upload implementation.
@@ -109,7 +111,7 @@
 - [ ] **Step 1: due selection 실패 사례 테스트 작성**
   `test_schedules.py`에서 미승인, 시작 전, 취소, 누락된 request, needs_attention, dispatch_uncertain 일정이 선택되지 않음을 고정한다.
 - [ ] **Step 2: due selection 테스트 실패 확인**
-  Run: `python -m pytest tests/cloud/test_schedules.py -q`
+  Run: `python -m unittest discover -s tests/cloud -p 'test_schedules.py'`
   Expected: 모듈/함수 부재로 실패.
 - [ ] **Step 3: 기존 store에 schedule list reader 추가**
   `cloud/store.py`의 FileStore/GitHubStore가 기존 `cloud/schedules` 기록만 읽고 정렬 가능한 데이터를 반환하게 한다. 경로 검증을 재사용한다.
@@ -118,7 +120,7 @@
 - [ ] **Step 5: 기존 advance 흐름에 후보 전달**
   `cloud/cli.py`의 `advance` 경로에서 due selector를 호출하되, 같은 request ID에 대해 기존 `advance`를 한 번만 실행한다. 기존 직접 request 실행/재개 의미를 회귀시키지 않는다.
 - [ ] **Step 6: CLI/store/engine 테스트**
-  Run: `python -m pytest tests/cloud/test_schedules.py tests/cloud/test_cli.py tests/cloud/test_engine.py tests/cloud/test_dispatcher.py -q`
+  Run: `python -m unittest discover -s tests/cloud`
   Expected: due 후보만 처리되고 기존 요청 상태 전이와 중복 방지 테스트가 PASS.
 - [ ] **Step 7: 작은 커밋으로 저장**
   `feat: advance approved due schedules on hosted actions`.
@@ -161,12 +163,12 @@
 - [ ] **Step 1: Actions-only 회귀 검사 추가**
   `tests/test_actions_only.py`에서 workflows에 `runs-on: ubuntu-latest`가 있고 `self-hosted` 및 로컬 scheduler 경로가 없음을 검사한다.
 - [ ] **Step 2: 테스트 실패 확인**
-  Run: `python -m pytest tests/test_actions_only.py -q`
+  Run: `python -m unittest discover -s tests -p 'test_actions_only.py'`
   Expected: 새 schedule execution invariant 검사만 실패.
 - [ ] **Step 3: 최소 workflow 연결 수정**
   `cloud-advance.yml`은 현재 이미 주기 `7,22,37,52 * * * *`와 `ubuntu-latest`를 사용한다. scanner 연결에 필요한 최소 차이만 반영하고 인증 secret이나 generation engine을 변경하지 않는다.
 - [ ] **Step 4: hosted CI 전체 테스트**
-  Run: `python -m pytest tests -q` in GitHub Actions CI.
+  Run: `python -m unittest discover -s tests` in GitHub Actions CI.
   Expected: 모든 cloud, status, timing, Actions-only 테스트 PASS.
 - [ ] **Step 5: dry-run/pilot 검증**
   전용 fixture와 read-only status 조회로 시작 전/미승인/취소/외부 작업 있음/중복 실행을 확인한다. 실제 production 요청의 Kaggle submit, Drive write, YouTube upload는 하지 않는다.
